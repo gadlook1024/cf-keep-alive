@@ -1,0 +1,17 @@
+name: Daily News Fetch
+
+on:
+  schedule:
+    # 08:50 CST (00:50 UTC) weekdays
+    - cron: '50 0 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch today news
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://daily-news-job.cfapps.ap21.hana.ondemand.com/api/today_news?type=general")
+          echo "Fetch response status: $STATUS"

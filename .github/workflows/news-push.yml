@@ -2,34 +2,12 @@ name: Daily News Push
 
 on:
   schedule:
-    # 08:50 CST (00:50 UTC) — fetch news
-    - cron: '50 0 * * 1-5'
-    # 09:50 CST (01:50 UTC) — push to subscribers
+    # 09:50 CST (01:50 UTC) weekdays
     - cron: '50 1 * * 1-5'
   workflow_dispatch:
-    inputs:
-      job:
-        description: 'Which job to run'
-        required: true
-        default: 'push'
-        type: choice
-        options:
-          - fetch
-          - push
 
 jobs:
-  fetch:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'fetch' || github.event_name == 'schedule' && startsWith(github.event.schedule, '50 0')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch today news
-        run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://daily-news-job.cfapps.ap21.hana.ondemand.com/api/today_news?type=general")
-          echo "Fetch response status: $STATUS"
-
   push:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.job == 'push' || github.event_name == 'schedule' && startsWith(github.event.schedule, '50 1')
     runs-on: ubuntu-latest
     steps:
       - name: Push news to subscribers
