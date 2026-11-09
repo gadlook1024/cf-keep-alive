@@ -1,0 +1,56 @@
+name: Keep CF Apps Alive
+
+on:
+  schedule:
+    # 23:30 SGT (15:30 UTC) — before SAP BTP Trial midnight stop
+    - cron: '30 15 * * *'
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get CF access token
+        id: token
+        run: |
+          RESPONSE=$(curl -s -X POST \
+            "https://uaa.cf.ap21.hana.ondemand.com/oauth/token" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -H "Authorization: Basic Y2Y6" \
+            -d "grant_type=refresh_token&refresh_token=${{ secrets.CF_REFRESH_TOKEN }}")
+          ACCESS_TOKEN=$(echo $RESPONSE | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+          echo "::add-mask::$ACCESS_TOKEN"
+          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Restart dailyhot-api
+        run: |
+          GUID=$(curl -s \
+            "https://api.cf.ap21.hana.ondemand.com/v3/apps?names=dailyhot-api&space_guids=8e1e9a35-758e-47b3-8494-62241ddf36d6" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['resources'][0]['guid'])")
+          curl -s -X POST \
+            "https://api.cf.ap21.hana.ondemand.com/v3/apps/$GUID/actions/restart" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}"
+          echo "dailyhot-api restarted ✓"
+
+      - name: Restart daily-news-job
+        run: |
+          GUID=$(curl -s \
+            "https://api.cf.ap21.hana.ondemand.com/v3/apps?names=daily-news-job&space_guids=8e1e9a35-758e-47b3-8494-62241ddf36d6" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['resources'][0]['guid'])")
+          curl -s -X POST \
+            "https://api.cf.ap21.hana.ondemand.com/v3/apps/$GUID/actions/restart" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}"
+          echo "daily-news-job restarted ✓"
+
+      - name: Restart astra-home
+        run: |
+          GUID=$(curl -s \
+            "https://api.cf.ap21.hana.ondemand.com/v3/apps?names=astra-home&space_guids=8e1e9a35-758e-47b3-8494-62241ddf36d6" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            | python3 -c "import json,sys; print(json.load(sys.stdin)['resources'][0]['guid'])")
+          curl -s -X POST \
+            "https://api.cf.ap21.hana.ondemand.com/v3/apps/$GUID/actions/restart" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}"
+          echo "astra-home restarted ✓"
