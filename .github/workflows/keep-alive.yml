@@ -4,6 +4,8 @@ on:
   schedule:
     # 00:05 SGT (16:05 UTC) — restart after SAP BTP Trial midnight stop
     - cron: '5 16 * * *'
+    # 06:00 CST (22:00 UTC prev day) — morning restart
+    - cron: '0 22 * * *'
   workflow_dispatch:
 
 jobs:
