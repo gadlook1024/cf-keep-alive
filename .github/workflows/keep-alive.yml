@@ -1,11 +1,7 @@
 name: Keep CF Apps Alive
 
 on:
-  schedule:
-    # 00:05 SGT (16:05 UTC) — restart after SAP BTP Trial midnight stop
-    - cron: '5 16 * * *'
-    # 06:00 CST (22:00 UTC prev day) — morning restart
-    - cron: '0 22 * * *'
+  # schedule removed — triggered by cron-job.org at 00:05 CST and 06:00 CST via workflow_dispatch
   workflow_dispatch:
 
 jobs:
