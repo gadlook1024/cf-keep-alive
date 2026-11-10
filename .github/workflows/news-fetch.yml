@@ -1,9 +1,7 @@
 name: Daily News Fetch
 
 on:
-  schedule:
-    # 08:50 CST (00:50 UTC) weekdays
-    - cron: '50 0 * * 1-5'
+  # schedule removed — triggered by cron-job.org at 08:50 CST via workflow_dispatch
   workflow_dispatch:
 
 jobs:
