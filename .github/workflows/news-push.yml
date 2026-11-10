@@ -1,9 +1,8 @@
 name: Daily News Push
 
 on:
-  schedule:
-    # 09:50 CST (01:50 UTC) weekdays
-    - cron: '50 1 * * 1-5'
+  # schedule removed — triggered by cron-job.org at 09:50 CST via workflow_dispatch
+  # keeping only manual trigger to avoid duplicate email sends
   workflow_dispatch:
 
 jobs:
