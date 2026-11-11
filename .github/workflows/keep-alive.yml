@@ -1,54 +1,92 @@
 name: Keep CF Apps Alive
 
 on:
-  # schedule removed — triggered by cron-job.org at 00:05 CST and 06:00 CST via workflow_dispatch
+  # Triggered by cron-job.org; keep only dispatch to avoid duplicate runs.
   workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: cf-trial-keep-alive
+  cancel-in-progress: false
 
 jobs:
   restart:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CF_API: https://api.cf.ap21.hana.ondemand.com
+      CF_ORG: 723b5515trial
+      CF_SPACE: dev
+      CF_ORIGIN: sap.ids
+      CF_SPACE_GUID: 8e1e9a35-758e-47b3-8494-62241ddf36d6
     steps:
-      - name: Get CF access token
-        id: token
+      - name: Install verified CF CLI version
         run: |
-          RESPONSE=$(curl -s -X POST \
-            "https://uaa.cf.ap21.hana.ondemand.com/oauth/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            -H "Authorization: Basic Y2Y6" \
-            -d "grant_type=refresh_token&refresh_token=${{ secrets.CF_REFRESH_TOKEN }}")
-          ACCESS_TOKEN=$(echo $RESPONSE | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
-          echo "::add-mask::$ACCESS_TOKEN"
-          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
+          mkdir -p "$RUNNER_TEMP/cf-cli"
+          curl --fail --location --silent --show-error --retry 3 \
+            --connect-timeout 15 --max-time 180 \
+            https://github.com/cloudfoundry/cli/releases/download/v8.18.3/cf8-cli_8.18.3_linux_x86-64.tgz \
+            -o "$RUNNER_TEMP/cf-cli.tgz"
+          echo "8942e2c3c98e83c7e14edbce939876bba7ff12a26f0f722c5aa5b079d357d50b  $RUNNER_TEMP/cf-cli.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/cf-cli.tgz" -C "$RUNNER_TEMP/cf-cli"
+          echo "$RUNNER_TEMP/cf-cli" >> "$GITHUB_PATH"
 
-      - name: Restart dailyhot-api
+      - name: Authenticate with a fresh CF session
+        env:
+          CF_USERNAME: ${{ secrets.CF_USERNAME }}
+          CF_PASSWORD: ${{ secrets.CF_PASSWORD }}
         run: |
-          GUID=$(curl -s \
-            "https://api.cf.ap21.hana.ondemand.com/v3/apps?names=dailyhot-api&space_guids=8e1e9a35-758e-47b3-8494-62241ddf36d6" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['resources'][0]['guid'])")
-          curl -s -X POST \
-            "https://api.cf.ap21.hana.ondemand.com/v3/apps/$GUID/actions/restart" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}"
-          echo "dailyhot-api restarted ✓"
+          if [ -z "$CF_USERNAME" ] || [ -z "$CF_PASSWORD" ]; then
+            echo "::error::CF_USERNAME and CF_PASSWORD must contain the verified SAP ID service credentials"
+            exit 1
+          fi
+          unset CF_TRACE
+          cf version
+          cf api "$CF_API"
+          cf auth --origin "$CF_ORIGIN"
+          unset CF_PASSWORD
+          cf target -o "$CF_ORG" -s "$CF_SPACE"
 
-      - name: Restart daily-news-job
-        run: |
-          GUID=$(curl -s \
-            "https://api.cf.ap21.hana.ondemand.com/v3/apps?names=daily-news-job&space_guids=8e1e9a35-758e-47b3-8494-62241ddf36d6" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['resources'][0]['guid'])")
-          curl -s -X POST \
-            "https://api.cf.ap21.hana.ondemand.com/v3/apps/$GUID/actions/restart" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}"
-          echo "daily-news-job restarted ✓"
+      - name: Restart dailyhot-api and wait for health
+        run: cf restart dailyhot-api
 
-      - name: Restart astra-home
+      - name: Restart daily-news-job and wait for health
+        run: cf restart daily-news-job
+
+      - name: Restart astra-home and wait for health
+        run: cf restart astra-home
+
+      - name: Verify every web instance is running and routable
         run: |
-          GUID=$(curl -s \
-            "https://api.cf.ap21.hana.ondemand.com/v3/apps?names=astra-home&space_guids=8e1e9a35-758e-47b3-8494-62241ddf36d6" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['resources'][0]['guid'])")
-          curl -s -X POST \
-            "https://api.cf.ap21.hana.ondemand.com/v3/apps/$GUID/actions/restart" \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}"
-          echo "astra-home restarted ✓"
+          python3 - <<'PY'
+          import json, os, subprocess, urllib.parse
+
+          def get(path):
+              result = subprocess.run(["cf", "curl", path], capture_output=True, text=True, check=True, timeout=60)
+              data = json.loads(result.stdout)
+              if "errors" in data:
+                  raise RuntimeError("CF API rejected health verification")
+              return data
+
+          for name in ("dailyhot-api", "daily-news-job", "astra-home"):
+              query = urllib.parse.urlencode({"names": name, "space_guids": os.environ["CF_SPACE_GUID"]})
+              apps = get("/v3/apps?" + query)["resources"]
+              if len(apps) != 1 or apps[0]["state"] != "STARTED":
+                  raise RuntimeError(name + " is missing or not started")
+              processes = get("/v3/apps/" + apps[0]["guid"] + "/processes")["resources"]
+              web = [process for process in processes if process["type"] == "web"]
+              if not web:
+                  raise RuntimeError(name + " has no web process")
+              for process in web:
+                  expected = process["instances"]
+                  stats = get("/v3/processes/" + process["guid"] + "/stats")["resources"]
+                  if expected < 1 or len(stats) != expected or any(instance["state"] != "RUNNING" or not instance.get("routable") for instance in stats):
+                      raise RuntimeError(name + " has an unhealthy web instance")
+                  print(name + ": " + str(expected) + "/" + str(expected) + " running and routable")
+          PY
+
+      - name: Remove runner authentication state
+        if: always()
+        run: |
+          if command -v cf >/dev/null 2>&1; then cf logout; fi
